@@ -1,0 +1,307 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2580
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 ```\{r setup, include=FALSE\}\
+library(ggplot2)\
+library(tidyr)\
+library(stringr)\
+library(dplyr)\
+library(ggrepel)\
+```\
+\
+\
+\
+```\{r import\}\
+\
+growth_matrix <- Proliferation_D0\
+growth_matrix <- full_join(growth_matrix,Proliferation_D21,by='V1')\
+\
+\
+colnames(growth_matrix)[1] <- "gRNA label"\
+colnames(growth_matrix)[2] <- "D0"\
+colnames(growth_matrix)[3] <- "D21"\
+\
+growth_matrix <- subset(growth_matrix,growth_matrix$`gRNA label` != "*")\
+growth_matrix <- subset(growth_matrix,growth_matrix$`gRNA label` != "non-targeting_01000")\
+growth_matrix$D0 <- growth_matrix$D0 +1\
+growth_matrix$D21 <- growth_matrix$D21 +1\
+\
+D0reads_growth <- as.numeric(sum(growth_matrix$D0))\
+D21reads_growth <- as.numeric(sum(growth_matrix$D21))\
+\
+growth_matrix$d0CPM <- growth_matrix$D0/D0reads_growth*1e6\
+growth_matrix$D21CPM <- growth_matrix$D21/D21reads_growth*1e6\
+\
+growth_matrix$ratio <- growth_matrix$d0CPM/growth_matrix$D21CPM\
+growth_matrix$log2ratio <- log2(growth_matrix$ratio)\
+\
+\
+growth_matrix_detail <- full_join(growth_matrix,finalLibrary, by="gRNA label")\
+growth_matrix_detail$DHS <- growth_matrix_detail$`gRNA label`\
+growth_non_targeting <- growth_matrix_detail %>% filter(str_detect(ID,"negative_control"))\
+growth_non_targeting <- growth_non_targeting %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+growth_non_targeting$guideNum <- as.numeric(growth_non_targeting$guideNum)\
+growth_non_targeting$group <- "negative_control"\
+growth_posCTL <- growth_matrix_detail %>% filter(str_detect(V1,"NM_"))\
+growth_posCTL <- growth_posCTL %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+growth_posCTL$guideNum <- as.numeric(growth_posCTL$guideNum)\
+growth_posCTL$group <- "positive_control"\
+growth_targeting <- dplyr::filter(growth_matrix_detail, !grepl("non", growth_matrix_detail$`gRNA label`))\
+growth_targeting <- dplyr::filter(growth_targeting, !grepl("NM_", growth_targeting$V1))\
+growth_targeting <- separate(data=growth_targeting, col = DHS, into=c('DHS','guideNum'), sep="__")\
+growth_targeting$DHS <- str_remove_all(growth_targeting$DHS,"gRNA_" )\
+growth_targeting$guideNum <- as.numeric(growth_targeting$guideNum)\
+growth_targeting$group <- "putative_reg_element"\
+\
+growth_combo <- bind_rows(growth_targeting,growth_non_targeting,growth_posCTL)\
+growth_combo$displayColor <- 'black'\
+growth_combo <- growth_combo %>% mutate(displayColor = if_else(group=='positive_control','red',displayColor))\
+growth_combo <- growth_combo %>% mutate(displayColor = if_else(group=='negative_control','blue',displayColor))\
+\
+# Calculting control population statistics (median, variance, # of guides)\
+growth_median_negCTL <- as.numeric(growth_non_targeting %>% summarize(median = median(ratio)))\
+growth_median_negCTL_log2fc <- log2(growth_median_negCTL)\
+growth_mean_negCTL <- as.numeric(growth_non_targeting %>% summarize(mean = mean(ratio)))\
+growth_mean_negCTL_log2fc <- log2(growth_mean_negCTL)\
+growth_stdev_negCTL <- as.numeric(growth_non_targeting %>% summarize(growth_stdev_log2FC = sd(log2ratio)))\
+growth_num_CTL <- as.numeric(growth_non_targeting %>% tally())\
+growth_varCTL <- as.numeric(growth_non_targeting %>% summarize(var = var(log2ratio)))\
+\
+#Add pZ term into raw data per-guide values\
+growth_combo$pZ <- (growth_combo$log2ratio - growth_median_negCTL_log2fc) / growth_stdev_negCTL\
+```\
+\
+```\{r DHSanalysis, echo=FALSE\}\
+\
+\
+#REP2-only: Calculate median-pZ values for DHSs\
+growth_DHSmed <- group_by(growth_combo, DHS) %>% \
+  summarize(log2fc=median(log2ratio),pZ = median(pZ),group=first(group),displayColor = first(displayColor)) \
+\
+growth_DHSstrong <- growth_combo %>% subset(abs(log2ratio)>2) %>% group_by(DHS) %>% summarize(log2fc=median(log2ratio),coord=str_c(first(chromosome),":",min(target.site.start.coordinate),"-",max(target.site.end.coordinate)), pZ_avg = mean(pZ),norm_sum_pZ = sum(pZ), count=n(),group=first(group),displayColor = first(displayColor)) %>% subset(count > 1) %>% subset(abs(pZ_avg)>1)\
+\
+growth_DHSavg <- group_by(growth_combo, DHS) %>% \
+  summarize(log2fc=median(log2ratio),pZ = mean(pZ),group=first(group),displayColor = first(displayColor)) \
+growth_DHSmed <- growth_DHSmed %>% arrange(pZ)\
+growth_DHSavg <- growth_DHSavg %>% arrange(pZ)\
+\
+growth_DHStally <- group_by(growth_combo, DHS) %>% \
+  summarize(count = n()) \
+growth_DHSmed <- full_join(growth_DHSmed,growth_DHStally,by="DHS")\
+\
+growth_DHSmed <- growth_DHSmed %>% mutate(case_when(pZ > 0.8 | pZ < -0.8 ~ DHS, TRUE ~""))\
+colnames(growth_DHSmed)[6] <- "plot_label"\
+\
+\
+\
+#Get t-score for DHS median data\
+varLookup <- growth_combo %>% group_by(DHS) %>% summarize(var = var(log2ratio))\
+\
+growth_DHSmed<- full_join(growth_DHSmed,varLookup,by="DHS")\
+growth_DHSmed <- growth_DHSmed %>% subset(count>1)\
+growth_DHSmed$svar <- ((growth_DHSmed$var*(growth_DHSmed$count - 1))+(growth_varCTL*(growth_num_CTL - 1))/(growth_num_CTL+growth_DHSmed$count-2))\
+growth_DHSmed$tscore <- (growth_DHSmed$log2fc - growth_median_negCTL_log2fc) / sqrt((growth_DHSmed$svar/growth_DHSmed$count) + (growth_DHSmed$svar/growth_num_CTL))\
+growth_DHSmed <- growth_DHSmed %>% mutate(case_when(tscore > 0.8 | tscore < -0.8 ~ DHS, TRUE ~""))\
+colnames(growth_DHSmed)[11] <- "tscore_label"\
+\
+growth_DHSavg<- full_join(growth_DHSavg,varLookup,by="DHS")\
+growth_DHSmed <- growth_DHSmed %>% subset(count>1)\
+growth_DHSmed$svar <- ((growth_DHSmed$var*(growth_DHSmed$count - 1))+(growth_varCTL*(growth_num_CTL - 1))/(growth_num_CTL+growth_DHSmed$count-2))\
+growth_DHSmed$tscore <- (growth_DHSmed$log2fc - growth_median_negCTL_log2fc) / sqrt((growth_DHSmed$svar/growth_DHSmed$count) + (growth_DHSmed$svar/growth_num_CTL))\
+growth_DHSmed <- growth_DHSmed %>% mutate(case_when(tscore > 0.8 | tscore < -0.8 ~ DHS, TRUE ~""))\
+colnames(growth_DHSmed)[11] <- "tscore_label"\
+\
+ggplot(growth_DHSmed, aes(x=pZ,y=abs(tscore)))+geom_point(colour=growth_DHSmed$displayColor,size = 2,alpha = 0.5)+ theme_bw() + xlab("pZ") + ylab("Absolute Phenotype Score") +theme(aspect.ratio =1) +geom_text_repel(aes(label=growth_DHSmed$tscore_label),color="grey", size=3)\
+\
+ggplot(growth_DHSmed, aes(x=as.numeric(row.names(growth_DHSmed)),y=pZ)) + geom_point(colour=growth_DHSmed$displayColor,size = 2,alpha = 0.3) + theme_bw() + xlab("Chromatin Region") + ylab("Median Effect size (pZ) per Region") + theme(aspect.ratio = 1,axis.text.x=element_blank(),axis.ticks.x=element_blank(),panel.grid.major.x  = element_blank(),panel.grid.minor.x = element_blank())+geom_hline(yintercept=0)+geom_text_repel(aes(label = growth_DHSmed$plot_label))\
+\
+Median_posCTL<- growth_DHSmed %>% subset(group=='positive_control') %>% subset(abs(pZ)>0.5) %>% arrange(pZ)\
+ALL_HIT<- growth_DHSmed %>% subset(abs(pZ)>0.5) %>% arrange(pZ)\
+RE_HIT<- growth_DHSmed %>% subset(group=='putative_reg_element') %>% subset(abs(pZ)>0.5) %>% arrange(pZ)\
+\
+  \
+  a <- ggplot(RE_HIT, aes(x=reorder(DHS,-pZ),y=pZ,label=pZ)) + \
+  geom_point(fill="black", size=6)  +\
+  geom_segment(aes(y = 0, \
+                   x = DHS, \
+                   yend = pZ, \
+                   xend = DHS), \
+               color = "black") +\
+  geom_text(aes(label=round(pZ,digits=2)),color="white", size=2) +\
+  coord_flip() + \
+  theme_bw() +\
+  theme(aspect.ratio = 2,\
+        axis.text.y = element_text(size=6)) +\
+  geom_vline(xintercept=0)\
+\
+\
+\
+\
+ctlMig_DHSmed <- group_by(growth_combo, DHS) %>% \
+  summarize(pZ = median(pZ_ctlMIG), displayColor = first(displayColor))  \
+ctlNON_DHSmed <- group_by(growth_combo, DHS) %>% \
+  summarize(pZ = median(pZ_ctlNON))  \
+\
+\
+\
+growth_DHSmed <- full_join(growth_DHSmed,ctlNON_DHSmed,by='DHS')\
+colnames(growth_DHSmed)[4] <- "pZ_ctlNON"\
+colnames(growth_DHSmed)[2] <- "pZ"\
+growth_DHSmed$delta <- abs(growth_DHSmed$pZ-growth_DHSmed$pZ_ctlNON)\
+growth_DHSmed <- full_join(growth_DHSmed,ctlMig_DHSmed,by='DHS')\
+colnames(growth_DHSmed)[2] <- "pZ"\
+colnames(growth_DHSmed)[4] <- "pZ_ctlNON"\
+colnames(growth_DHSmed)[6] <- "pZ_ctlMIG"\
+growth_DHSmed$delta_ctlMIG <- abs(growth_DHSmed$pZ-growth_DHSmed$pZ_ctlMIG)\
+\
+\
+growth_DHSavg <- group_by(growth_combo, DHS) %>% \
+  summarize(pZ = mean(pZ))  \
+\
+compare <- full_join(ctlMig_DHSmed,growth_DHSmed,by='DHS')\
+colnames(compare)[3] <- "migCTL"\
+colnames(compare)[2] <- "migNON"\
+compare$delta <- compare$migNON / compare$migCTL * 100\
+\
+growth_DHSmed_negStrand$medianFC_norm <- growth_DHSmed_negStrand$medianFC - growth_median_negCTL\
+growth_DHSmed_negStrand$medianlog2FC <- log2(growth_DHSmed_negStrand$medianFC)\
+growth_DHSmed_negStrand$pZ <- (growth_DHSmed_negStrand$medianlog2FC - growth_median_negCTL_log2fc)/growth_stdev_negCTL  \
+\
+\
+```\{r setup, include=FALSE\}\
+library(ggplot2)\
+library(tidyr)\
+library(stringr)\
+library(dplyr)\
+library(ggrepel)\
+```\
+\
+\
+\
+```\{r import\}\
+\
+rep2_rep2_growth_matrix <- rep2_D0_CTL\
+rep2_rep2_growth_matrix <- full_join(rep2_rep2_growth_matrix,rep2_D22_CTL,by='V1')\
+\
+\
+colnames(rep2_growth_matrix)[1] <- "gRNA label"\
+colnames(rep2_growth_matrix)[2] <- "D0"\
+colnames(rep2_growth_matrix)[3] <- "D22"\
+\
+rep2_growth_matrix <- subset(rep2_growth_matrix,rep2_growth_matrix$`gRNA label` != "*")\
+rep2_growth_matrix <- subset(rep2_growth_matrix,rep2_growth_matrix$`gRNA label` != "non-targeting_01000")\
+rep2_growth_matrix$D0 <- rep2_growth_matrix$D0 +1\
+rep2_growth_matrix$D22 <- rep2_growth_matrix$D22 +1\
+\
+D0reads_rep2_growth <- as.numeric(sum(rep2_growth_matrix$D0))\
+D22reads_rep2_growth <- as.numeric(sum(rep2_growth_matrix$D22))\
+\
+rep2_growth_matrix$d0CPM <- rep2_growth_matrix$D0/D0reads_rep2_growth*1e6\
+rep2_growth_matrix$D22CPM <- rep2_growth_matrix$D22/D22reads_rep2_growth*1e6\
+\
+rep2_growth_matrix$ratio <- rep2_growth_matrix$d0CPM/rep2_growth_matrix$D22CPM\
+rep2_growth_matrix$log2ratio <- log2(rep2_growth_matrix$ratio)\
+\
+\
+rep2_growth_matrix_detail <- full_join(rep2_growth_matrix,finalLibrary, by="gRNA label")\
+rep2_growth_matrix_detail$DHS <- rep2_growth_matrix_detail$`gRNA label`\
+rep2_growth_non_targeting <- rep2_growth_matrix_detail %>% filter(str_detect(ID,"negative_control"))\
+rep2_growth_non_targeting <- rep2_growth_non_targeting %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+rep2_growth_non_targeting$guideNum <- as.numeric(rep2_growth_non_targeting$guideNum)\
+rep2_growth_non_targeting$group <- "negative_control"\
+rep2_growth_posCTL <- rep2_growth_matrix_detail %>% filter(str_detect(V1,"NM_"))\
+rep2_growth_posCTL <- rep2_growth_posCTL %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+rep2_growth_posCTL$guideNum <- as.numeric(rep2_growth_posCTL$guideNum)\
+rep2_growth_posCTL$group <- "positive_control"\
+rep2_growth_targeting <- dplyr::filter(rep2_growth_matrix_detail, !grepl("non", rep2_growth_matrix_detail$`gRNA label`))\
+rep2_growth_targeting <- dplyr::filter(rep2_growth_targeting, !grepl("NM_", rep2_growth_targeting$V1))\
+rep2_growth_targeting <- separate(data=rep2_growth_targeting, col = DHS, into=c('DHS','guideNum'), sep="__")\
+rep2_growth_targeting$DHS <- str_remove_all(rep2_growth_targeting$DHS,"gRNA_" )\
+rep2_growth_targeting$guideNum <- as.numeric(rep2_growth_targeting$guideNum)\
+rep2_growth_targeting$group <- "putative_reg_element"\
+\
+rep2_growth_combo <- bind_rows(rep2_growth_targeting,rep2_growth_non_targeting,rep2_growth_posCTL)\
+rep2_growth_combo$displayColor <- 'black'\
+rep2_growth_combo <- rep2_growth_combo %>% mutate(displayColor = if_else(group=='positive_control','red',displayColor))\
+rep2_growth_combo <- rep2_growth_combo %>% mutate(displayColor = if_else(group=='negative_control','blue',displayColor))\
+\
+# Calculting control population statistics (median, variance, # of guides)\
+rep2_growth_median_negCTL <- as.numeric(rep2_growth_non_targeting %>% summarize(median = median(ratio)))\
+rep2_growth_median_negCTL_log2fc <- log2(rep2_growth_median_negCTL)\
+rep2_growth_mean_negCTL <- as.numeric(rep2_growth_non_targeting %>% summarize(mean = mean(ratio)))\
+rep2_growth_mean_negCTL_log2fc <- log2(rep2_growth_mean_negCTL)\
+rep2_growth_stdev_negCTL <- as.numeric(rep2_growth_non_targeting %>% summarize(rep2_growth_stdev_log2FC = sd(log2ratio)))\
+rep2_growth_num_CTL <- as.numeric(rep2_growth_non_targeting %>% tally())\
+rep2_growth_varCTL <- as.numeric(rep2_growth_non_targeting %>% summarize(var = var(log2ratio)))\
+\
+#Add pZ term into raw data per-guide values\
+rep2_growth_combo$pZ <- (rep2_growth_combo$log2ratio - rep2_growth_median_negCTL_log2fc) / rep2_growth_stdev_negCTL\
+```\
+\
+FROM NEW\
+```\{r combinedAnalysis, echo=FALSE\}\
+#Combined reps, by gRNA for analysis\
+growth_combo_gRNA <- bind_rows(growth_combo,rep2_growth_combo)\
+\
+ggplot(growth_combo_gRNA %>% filter(group=="positive_control" | group=="putative_reg_element") , aes(x=DHS,y=log2ratio))+geom_point(size=3,alpha=0.3, stroke=0)+theme_bw()+theme(axis.ticks.x = element_blank(),axis.text.x = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank())+scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) \
+\
+#Graph ::::::: DHS plots\
+growth_tempDHS <- growth_combo_gRNA %>% subset(DHS==605)\
+ggplot(growth_tempDHS,aes(x=target.site.start.coordinate,y=pZ))+geom_point(size=3,alpha=0.6)+theme_bw()+geom_hline(yintercept = -1.25)+geom_hline(yintercept = 1.25)\
+\
+#Graph ::::::: CTL DHS Plots\
+growth_controlGraph <- growth_combo_gRNA %>% subset(group=="positive_control")\
+ggplot(growth_controlGraph,aes(x=DHS,y=pZ))+geom_point(size=3,alpha=0.6)+theme_bw()+geom_hline(yintercept = -1.5)+geom_hline(yintercept = 1.5)+theme(axis.text.x = element_text(angle = 90))\
+\
+#Combined reps, by DHS for analysis\
+growth_combo_nonfilt <- inner_join(growth_combo %>% group_by(DHS) %>% summarise(pZ=mean(pZ),count=n(),coord=str_c(first(chromosome),":",min(target.site.start.coordinate),"-",max(target.site.end.coordinate))),rep2_growth_combo %>% group_by(DHS) %>% summarise(pZ=mean(pZ),count=n(),coord=str_c(first(chromosome),":",min(target.site.start.coordinate),"-",max(target.site.end.coordinate))),by="DHS") %>% select(1:5)\
+growth_combo_nonfilt$avg_pZ <- (growth_combo_nonfilt$pZ.x+growth_combo_nonfilt$pZ.y)/2\
+\
+#Filtering each rep for DHS hits and combining\
+growth_rep1_hits <- growth_combo %>% subset(abs(pZ)>1.25)\
+growth_rep1_DHS <- growth_rep1_hits %>% group_by(DHS) %>% summarise(pZ=mean(pZ),count=n(),coord=str_c(first(chromosome),":",min(target.site.start.coordinate),"-",max(target.site.end.coordinate)))\
+\
+growth_rep2_hits <- rep2_growth_combo %>% subset(abs(pZ)>1.25)\
+growth_rep2_DHS <- rep2_hits %>% group_by(DHS) %>% summarise(pZ=mean(pZ),count=n())\
+\
+growth_combo_hits <- bind_rows(growth_rep1_hits,growth_rep2_hits)\
+growth_combo_DHS <- growth_combo_hits %>% group_by(DHS) %>% summarise(coord=str_c(first(chromosome),":",min(target.site.start.coordinate),"-",max(target.site.end.coordinate)),pZ=mean(pZ),count=n())\
+growth_combo_DHS$sum_pZ <- growth_combo_DHS$pZ*growth_combo_DHS$count\
+growth_DHS_comp <- growth_combo %>% group_by(DHS) %>% summarise(count=n(),group=first(group))\
+growth_merged_DHS <- right_join(growth_combo_DHS,growth_DHS_comp,by="DHS")\
+growth_merged_DHS$pZ <- replace_na(growth_merged_DHS$pZ,0)\
+colnames(growth_merged_DHS)[4] <- "hit_count"\
+colnames(growth_merged_DHS)[6] <- "DHS_count"\
+growth_merged_DHS$DHS_count <- growth_merged_DHS$DHS_count*2 #two reps, so 2x total guides to get hits\
+growth_merged_DHS$fraction <- growth_merged_DHS$hit_count/growth_merged_DHS$DHS_count\
+growth_merged_DHS$sorting_factor <- growth_merged_DHS$fraction * abs(growth_merged_DHS$pZ)\
+growth_hit <- growth_merged_DHS %>% subset(fraction>0.1) %>% subset(abs(pZ)>1) %>% subset (hit_count>1)\
+\
+growth_merged_DHS <- growth_merged_DHS %>% mutate(fraction= replace_na(fraction, 0))\
+growth_merged_DHS_Z_scaling_factor <- min(growth_merged_DHS$pZ)\
+growth_merged_DHS$scaled_pZ <- growth_merged_DHS$pZ + abs(growth_merged_DHS_Z_scaling_factor)\
+growth_merged_DHS_frac_scaling_factor <- max(growth_merged_DHS$scaled_pZ) / max(growth_merged_DHS$fraction)\
+growth_merged_DHS$scaled_fraction <- growth_merged_DHS$fraction * growth_merged_DHS_frac_scaling_factor\
+growth_merged_DHS$sorting_factor <- growth_merged_DHS$scaled_fraction * growth_merged_DHS$scaled_pZ\
+growth_hit <- growth_merged_DHS %>% subset(hit_count>1) %>% subset(DHS_count>=20) %>% subset(group=="putative_reg_element")	%>% top_n(50,abs(sorting_factor))\
+\
+#Graph::::::::::::: Overall pZ\
+ggplot(growth_combo_nonfilt,aes(reorder(DHS,avg_pZ),avg_pZ))+geom_point(size=3,alpha=0.15,stroke=0)+theme_bw()+theme(axis.ticks.x = element_blank(),axis.text.x = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank())+geom_hline(yintercept=0)+expand_limits(x=c(-300, 1200))+geom_text_repel(nudge_x = -50,min.segment.length = 10,max.overlaps = Inf,data=growth_combo_nonfilt %>% top_n(30,abs(avg_pZ)),aes(label=DHS))\
+\
+#Graph:::::: count vs ordered pZ\
+#ggplot(combo_nonfilt,aes(reorder(DHS,avg_pZ),count.x))+geom_point(size=3,alpha=0.15,stroke=0)+theme_bw()+theme(axis.ticks.x = element_blank(),axis.text.x = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank())+scale_y_continuous(limit=c(0,40))+expand_limits(x=c(-25, 250))\
+  \
+#Fraction vs pZ graph\
+ggplot(growth_merged_DHS %>%  filter(hit_count>1) %>% subset(abs(pZ) > 1),aes(x=pZ,y=fraction))+geom_point(size=3,alpha=0.3,stroke=0)+geom_point(size=3,alpha=0.3,stroke=0,color="red",data=growth_merged_DHS %>% filter(hit_count>1) %>% subset(abs(pZ) > 1) %>% subset(group=="positive_control"))+theme_bw()+geom_text_repel(size=3,min.segment.length = 0,max.overlaps = Inf,data=growth_merged_DHS %>%  filter(hit_count>1) %>% subset(abs(pZ) > 1) %>% top_n(30,fraction), # Filter data first\
+    aes(label=DHS)) +geom_vline(xintercept = 0) +scale_x_continuous(breaks = scales::pretty_breaks(n = 5))\
+\
+#Rank Ordered sorting graph\
+ggplot(merged_DHS,aes(reorder(DHS,pZ),pZ))+geom_point(size=3,alpha=0.6,stroke=0)+theme_bw()+theme(axis.ticks.x = element_blank(),axis.text.x = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank())+expand_limits(x=c(-25, 250))+geom_text_repel(size=3,hjust = "left",min.segment.length = 0,data=merged_DHS %>%  filter(hit_count>1) %>% top_n(20,sorting_factor),aes(label=DHS))\
+\
+#pZ vs pZ Rep Comparison \
+ggplot(growth_combo,aes(x=pZ,y=rep2_growth_combo$pZ))+geom_point(alpha=0.3,stroke=0)+theme_bw()+scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + scale_y_continuous(breaks = scales::pretty_breaks(n = 10))+geom_hline(yintercept=1,color="black",alpha=0.6)+geom_hline(yintercept=-1,color="black",alpha=0.6)+geom_vline(xintercept=-1,color="black",alpha=0.6)+geom_vline(xintercept=1,color="black",alpha=0.6)+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())\
+```}

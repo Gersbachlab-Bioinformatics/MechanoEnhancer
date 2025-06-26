@@ -1,0 +1,420 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2580
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 ---\
+title: "MYH9lib rep1 screen analysis"\
+output:\
+  html_document: default\
+  pdf_document: default\
+---\
+\
+```\{r setup, include=FALSE\}\
+knitr::opts_chunk$set(echo = TRUE)\
+library(dplyr)\
+library(ggplot2)\
+library(tidyr)\
+library(stringr)\
+library(ggrepel)\
+library(readxl)\
+\
+```\
+\
+## Import raw files from Python Analysis and make master comparison file\
+\
+```\{r import\}\
+MYH9low_counts <- read.delim("~/Downloads/MYH9low_counts.txt", header=FALSE)\
+MYH9high_counts <- read.delim("~/Downloads/MYH9high_counts.txt", header=FALSE)\
+\
+#Set Raw read numbers for normalization per library\
+MYH9lowReadCount <- sum(MYH9low_counts$V3)\
+MYH9highReadCount <- sum(MYH9high_counts$V3)\
+#MYH9unsortedReadCount <- sum(MYH9unsorted_counts$V3)\
+\
+MYH9low_countsSimple <- MYH9low_counts[,c(1,3)]\
+MYH9high_countsSimple <- MYH9high_counts[,c(1,3)]\
+#MYH9unsorted_countsSimple <- MYH9unsorted_counts[,c(1,3)]\
+\
+# Import data handling/renaming\
+colnames(MYH9low_countsSimple)[1] <- "gRNA label"\
+colnames(MYH9high_countsSimple)[1] <- "gRNA label"\
+#colnames(MYH9unsorted_countsSimple)[1] <- "gRNA label"\
+\
+colnames(MYH9low_countsSimple)[2] <- "counts"\
+colnames(MYH9high_countsSimple)[2] <- "counts"\
+#colnames(MYH9unsorted_countsSimple)[2] <- "counts"\
+```\
+\
+## Make the combined matrix \
+```\{r makeMTX, inlcude=TRUE\}\
+mergeMYH9 <- full_join(MYH9low_countsSimple,MYH9high_countsSimple,by='gRNA label')\
+colnames(mergeMYH9) <- c("gRNA label","MYH9 low raw counts", "MYH9 high raw counts")\
+\
+#Generate normalized counts per million (CPM) for each readset and determine fold change\
+mergeMYH9 <- mergeMYH9 %>%mutate(lowCPM=mergeMYH9$`MYH9 low raw counts`/MYH9lowReadCount*1000000)\
+mergeMYH9 <- mergeMYH9 %>%mutate(highCPM=mergeMYH9$`MYH9 high raw counts`/MYH9highReadCount*1000000)\
+mergeMYH9 <- mergeMYH9 %>%mutate(lowHIGHfc=lowCPM/highCPM)\
+mergeMYH9 <- mergeMYH9 %>%mutate(lowHIGH_log2fc=log2(lowHIGHfc))\
+\
+\
+#Remove all cases of no reads, likely from mismatched or more than one matched guides from bowtie \
+noReads <- filter(mergeMYH9, `MYH9 low raw counts`==0 | `MYH9 high raw counts`==0)\
+mergeMYH9 <- filter(mergeMYH9, `MYH9 low raw counts`!=0 | `MYH9 high raw counts`!=0)\
+#Add detail to matrices and add DHS column to be formatted below\
+mergeMYH9detail <-  full_join(mergeMYH9, finalLibrary, by="gRNA label")\
+mergeMYH9detail$DHS <- mergeMYH9detail$`gRNA label`\
+\
+#Split into two sets -- targeting and non-targeting for use in plotting.\
+non_targeting <- mergeMYH9detail %>% filter(str_detect(group,"negative_control"))\
+MYH9targeting <- mergeMYH9detail %>% filter(str_detect(`gRNA label`,"gRNA"))\
+\
+\
+#Tidy up DHS labels in each\
+MYH9targeting <- separate(data=MYH9targeting, col = DHS, into=c('DHS','guideNum'), sep="__")\
+MYH9targeting$DHS <- str_remove_all(MYH9targeting$DHS,"gRNA_" )\
+non_targeting <- non_targeting %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+\
+#Make a combined dataset for use in DHS statitsics \
+comboMYH9 <- bind_rows(MYH9targeting,non_targeting)\
+neg_stranded <- filter(MYH9targeting, strand == "-")\
+combo_neg_stranded <- bind_rows(neg_stranded,non_targeting)\
+pos_stranded <- filter(MYH9targeting, strand == "+")\
+\
+```\
+\
+## Location Plots\
+\
+```\{r LocationPlots, echo=FALSE\}\
+\
+#Unstranded Plot with Chr Axes (Regular FC)\
+ggplot(MYH9targeting, aes(x=as.numeric(`target site start coordinate`),y=lowHIGHfc)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Unstranded")\
+#Unstranded Plot with Chr Axes (log2FC)\
+ggplot(MYH9targeting, aes(x=as.numeric(`target site start coordinate`),y=log2(lowHIGHfc))) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High log2(FC)") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Unstranded")\
+\
+#Pos-Stranded Plot with Chr Axes (Regular FC)\
+ggplot(pos_stranded, aes(x=as.numeric(`target site start coordinate`),y=lowHIGHfc)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Positive stranded")\
+#Neg-Stranded Plot with Chr Axes (Regular FC)\
+ggplot(neg_stranded, aes(x=as.numeric(`target site start coordinate`),y=lowHIGHfc)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High FC") + theme(text = element_text(size=16), panel.grid.major.x  = element_blank())+ggtitle("Negative stranded")+geom_hline(yintercept = rep2A_mean_negCTL,color="red")\
+#Neg-Stranded Plot with Chr Axes (log2FC)\
+ggplot(neg_stranded, aes(x=as.numeric(`target site start coordinate`),y=log2(lowHIGHfc))) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High log2FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Negative stranded log2FC")\
+```\
+## DHS-specific Analysis \
+\
+```\{r DHSanalysis, echo=FALSE\}\
+forceDHS <- c(10,40,45,59,60,65,67,73,74,75,80,92,95,99)\
+tssDHS <- c(71,72)\
+\
+\
+# Calculting control population statistics (median, variance, # of guides)\
+median_negCTL <- as.numeric(non_targeting %>% summarize(median = median(lowHIGHfc)))\
+mean_negCTL <- as.numeric(non_targeting %>% summarize(mean = mean(lowHIGHfc)))\
+mean_negCTL_log2fc <- log2(mean_negCTL)\
+median_negCTL_log2fc <- as.numeric(non_targeting %>% summarize(median_log2FC = median(lowHIGH_log2fc)))\
+stdev_negCTL <- as.numeric(non_targeting %>% summarize(stdev_log2FC = sd(lowHIGH_log2fc)))\
+num_CTL <- as.numeric(non_targeting %>% tally())\
+varCTL <- as.numeric(non_targeting %>% summarize(var = var(lowHIGH_log2fc)))\
+\
+#Add pZ term into raw data per-guide values\
+MYH9targeting$pZ <- (MYH9targeting$lowHIGH_log2fc - median_negCTL_log2fc) / stdev_negCTL\
+plot(MYH9targeting$`target site start coordinate`,MYH9targeting$pZ)\
+neg_stranded$pZ <- (neg_stranded$lowHIGH_log2fc - median_negCTL_log2fc) / stdev_negCTL\
+\
+\
+\
+#Calculate median-pZ values for DHSs\
+DHSmed_negStrand <- group_by(neg_stranded, DHS) %>% \
+  summarize(medianFC = median(lowHIGHfc))  \
+DHSmed_negStrand$medianFC_norm <- DHSmed_negStrand$medianFC - median_negCTL\
+DHSmed_negStrand$medianlog2FC <- log2(DHSmed_negStrand$medianFC)\
+DHSmed_negStrand$pZ <- (DHSmed_negStrand$medianlog2FC - median_negCTL_log2fc)/stdev_negCTL\
+\
+#Color-code plots by which type of DHS they're in, plots\
+DHSmed_negStrand$group <- ifelse(DHSmed_negStrand$DHS %in% forceDHS, "#00B2FF", "black")\
+DHSmed_negStrand <-mutate(DHSmed_negStrand, group = ifelse(DHSmed_negStrand$DHS %in% tssDHS, "#BC544B", group))\
+\
+ggplot(DHSmed_negStrand, aes(x=as.numeric(DHS),y=pZ)) + geom_point(colour=DHSmed_negStrand$group,size = 3,alpha = 1) + theme_minimal() + xlab("DHS") + ylab("Effect size (pZ) per DHS") + theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black'))\
+\
+ggplot(neg_stranded, aes(x=as.numeric(`target site start coordinate`),y=pZ)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Effect Size (pZ)") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())\
+\
+write.table(neg_stranded[,c(8,9,10,21)], file= "MYH9lib_rep1_NegStranded_normalizedpZ.bedgraph", sep=" ", col.names=FALSE, row.names=FALSE, quote = FALSE)\
+\
+\
+#Get variance for each guide \
+guides_per_DHS <- neg_stranded %>% group_by(DHS) %>% tally()\
+varLookup <- neg_stranded %>% group_by(DHS) %>% summarize(var = var(lowHIGH_log2fc))\
+\
+#Get t-score for DHS median data\
+DHSmed_negStrand <- full_join(DHSmed_negStrand,guides_per_DHS,by="DHS")\
+DHSmed_negStrand <- full_join(DHSmed_negStrand,varLookup,by="DHS")\
+DHSmed_negStrand$svar <- ((DHSmed_negStrand$var*(DHSmed_negStrand$n - 1)) +(varCTL*(num_CTL - 1)))\
+DHSmed_negStrand$tscore <- (DHSmed_negStrand$medianlog2FC - median_negCTL_log2fc) / sqrt(DHSmed_negStrand$svar/DHSmed_negStrand$n + DHSmed_negStrand$svar/num_CTL)\
+\
+ggplot(DHSmed_negStrand, aes(x=as.numeric(DHS),y=tscore)) + geom_point(colour=DHSmed_negStrand$group,size = 3,alpha = 1) + theme_minimal() + xlab("DHS") + ylab("Phenotype score per DHS (t-score)") + theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black'))\
+\
+ggplot(DHSmed_negStrand, aes(x=pZ,y=abs(tscore))) + geom_point(colour=DHSmed_negStrand$group,size = 3,alpha = 1) + theme_minimal() + xlab("Effect size (pZ)") + ylab("Absolute Phenotype score per DHS (t-score)") + theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black'))\
+\
+```\
+\
+``` \{r PCR validation, echo=FALSE\}\
+qPCRcomparison <- read_excel("qPCRcomparison.xlsx", \
+    col_names = FALSE)\
+colnames(qPCRcomparison)[1] <- 'name'\
+colnames(qPCRcomparison)[2] <- 'gRNA'\
+colnames(qPCRcomparison)[3] <- 'MYH9 RNA'\
+qPCRcomparison <- inner_join(qPCRcomparison,MYH9targeting, by="gRNA")\
+qPCRcomparison$log2fc_norm <- qPCRcomparison$lowHIGH_log2fc - mean_negCTL_log2fc\
+qPCRcomp_negStrand <- filter(qPCRcomparison,strand == "-")\
+plot(as.numeric(qPCRcomp_negStrand$`MYH9 RNA`),qPCRcomp_negStrand$pZ)\
+plot(as.numeric(qPCRcomp_negStrand$`MYH9 RNA`),qPCRcomp_negStrand$log2fc_norm)\
+\
+\
+```\
+\
+``` \{r DHSanalysis-average, echo=FALSE\}\
+#Calculate mean-pZ values for DHSs\
+DHSavg_negStrand <- group_by(neg_stranded, DHS) %>% \
+  summarize(meanFC = mean(lowHIGHfc))  \
+DHSavg_negStrand$meanFC_norm <- DHSavg_negStrand$meanFC - mean_negCTL\
+DHSavg_negStrand$meanlog2FC <- log2(DHSavg_negStrand$meanFC)\
+DHSavg_negStrand$pZ <- (DHSavg_negStrand$meanlog2FC - mean_negCTL_log2fc)/stdev_negCTL\
+ggplot(DHSmed_negStrand, aes(x=as.numeric(DHS),y=pZ)) + geom_point(colour=DHSmed_negStrand$group,size = 3,alpha = 1) + theme_minimal() + xlab("DHS") + ylab("Effect Size (pZ) per DHS") + theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black'))\
+\
+#Get t-score for DHS average data\
+DHSavg_negStrand <- full_join(DHSavg_negStrand,guides_per_DHS,by="DHS")\
+DHSavg_negStrand <- full_join(DHSavg_negStrand,varLookup,by="DHS")\
+DHSavg_negStrand$svar <- ((DHSavg_negStrand$var*(DHSavg_negStrand$n - 1)) +(varCTL*(num_CTL - 1)))\
+DHSavg_negStrand$tscore <- (DHSavg_negStrand$meanlog2FC - mean_negCTL_log2fc) / sqrt(DHSavg_negStrand$svar/DHSavg_negStrand$n +DHSavg_negStrand$svar/num_CTL)\
+plot(DHSavg_negStrand$DHS,DHSavg_negStrand$tscore)\
+plot(DHSavg_negStrand$pZ,abs(DHSavg_negStrand$tscore))\
+```\
+\
+---\
+title: "MYH9screen_analysis"\
+output: html_document\
+---\
+\
+```\{r setup, include=FALSE\}\
+library(ggplot2)\
+library(tidyr)\
+library(stringr)\
+library(dplyr)\
+\
+```\
+\
+\
+\
+```\{r import\}\
+rep2A_matrix <- MYH9low_counts_rep2A\
+rep2A_matrix <- full_join(rep2A_matrix,MYH9high_counts_rep2A,by='V1')\
+rep2A_matrix <- full_join(rep2A_matrix,MYH9unsort_counts_rep2A,by='V1')\
+\
+colnames(rep2A_matrix)[1] <- "gRNA label"\
+colnames(rep2A_matrix)[2] <- "MYH9low_raw"\
+colnames(rep2A_matrix)[3] <- "MYH9high_raw"\
+colnames(rep2A_matrix)[4] <- "MYH9unsort_raw"\
+\
+lowReads_rep2A <- as.numeric(sum(rep2A_matrix$MYH9low_raw))\
+highReads_rep2A <- as.numeric(sum(rep2A_matrix$MYH9high_raw))\
+unsortReads_rep2A <- as.numeric(sum(rep2A_matrix$MYH9unsort_raw))\
+\
+rep2A_matrix$lowCPM <- rep2A_matrix$MYH9low_raw/lowReads_rep2A*1e6\
+rep2A_matrix$highCPM <- rep2A_matrix$MYH9high_raw/highReads_rep2A*1e6\
+rep2A_matrix$unsortCPM <- rep2A_matrix$MYH9unsort_raw/unsortReads_rep2A*1e6\
+rep2A_matrix$lowHIGH <- rep2A_matrix$lowCPM/rep2A_matrix$highCPM\
+rep2A_matrix$log2FClowHIGH <- log2(rep2A_matrix$lowHIGH)\
+\
+rep2A_matrix_detail <- full_join(rep2A_matrix,finalLibrary, by="gRNA label")\
+rep2A_matrix_detail$DHS <- rep2A_matrix_detail$`gRNA label`\
+rep2A_non_targeting <- rep2A_matrix_detail %>% filter(str_detect(group,"negative_control"))\
+rep2A_non_targeting <- rep2A_non_targeting %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+rep2A_matrix_detail$DHS <- str_remove_all(rep2A_matrix_detail$DHS,"gRNA_" )\
+rep2A_matrix_detail <- separate(data=rep2A_matrix_detail, col = DHS, into=c('DHS','guideNum'), sep="__")\
+\
+rep2A_MYH9targeting <- dplyr::filter(rep2A_matrix_detail, !grepl("non", DHS))\
+\
+rep2A_comboMYH9 <- bind_rows(rep2A_MYH9targeting,rep2A_non_targeting)\
+rep2A_neg_stranded <- filter(rep2A_MYH9targeting, strand == "-")\
+rep2A_combo_neg_stranded <- bind_rows(rep2A_neg_stranded,rep2A_non_targeting)\
+rep2A_combo_pos_stranded <- bind_rows(rep2A_neg_stranded,rep2A_non_targeting) \
+\
+rep2A_pos_stranded <- filter(rep2A_MYH9targeting, strand == "+")\
+\
+```\
+\
+\
+#PLOTTING LOCATION DATA\
+\
+```\{r LocationPlots, echo=FALSE\}\
+\
+#Unstranded Plot with Chr Axes (Regular FC)\
+ggplot(rep2A_MYH9targeting, aes(x=as.numeric(`target site start coordinate`),y=lowHIGH)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Unstranded")\
+#Unstranded Plot with Chr Axes (log2FC)\
+ggplot(rep2A_MYH9targeting, aes(x=as.numeric(`target site start coordinate`),y=log2(lowHIGH))) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High log2(FC)") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Unstranded")\
+\
+#Pos-Stranded Plot with Chr Axes (Regular FC)\
+ggplot(rep2A_pos_stranded, aes(x=as.numeric(`target site start coordinate`),y=lowHIGH)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Positive stranded")\
+#Neg-Stranded Plot with Chr Axes (Regular FC)\
+ggplot(rep2A_neg_stranded, aes(x=as.numeric(`target site start coordinate`),y=lowHIGH)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High FC") + theme(text = element_text(size=16), panel.grid.major.x  = element_blank())+ggtitle("Negative stranded")+geom_hline(yintercept = rep2A_mean_negCTL,color="red")\
+#Neg-Stranded pZ Plot with Chr Axes (Regular FC)\
+ggplot(rep2A_neg_stranded, aes(x=as.numeric(`target site start coordinate`),y=lowHIGH)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High FC") + theme(text = element_text(size=16), panel.grid.major.x  = element_blank())+ggtitle("Negative stranded")+geom_hline(yintercept = rep2A_mean_negCTL,color="red")\
+#Neg-Stranded Plot with Chr Axes (log2FC)\
+ggplot(rep2A_neg_stranded, aes(x=as.numeric(`target site start coordinate`),y=log2(lowHIGH))) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Low/High log2FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Negative stranded log2FC")\
+```\
+\
+```\{r DHSanalysis, echo=FALSE\}\
+forceDHS <- c(10,40,45,59,60,65,67,73,74,75,80,92,95,99)\
+tssDHS <- c(71,72)\
+\
+\
+# Calculting control population statistics (median, variance, # of guides)\
+rep2A_median_negCTL <- as.numeric(rep2A_non_targeting %>% summarize(median = median(lowHIGH)))\
+rep2A_mean_negCTL <- as.numeric(rep2A_non_targeting %>% summarize(mean = mean(lowHIGH)))\
+rep2A_mean_negCTL_log2fc <- log2(rep2A_mean_negCTL)\
+rep2A_median_negCTL_log2fc <- as.numeric(rep2A_non_targeting %>% summarize(rep2A_median_log2FC = median(rep2A_lowHIGH_log2fc)))\
+rep2A_stdev_negCTL <- as.numeric(rep2A_non_targeting %>% summarize(rep2A_stdev_log2FC = sd(log2FClowHIGH)))\
+rep2A_num_CTL <- as.numeric(rep2A_non_targeting %>% tally())\
+rep2A_varCTL <- as.numeric(rep2A_non_targeting %>% summarize(var = var(log2FClowHIGH)))\
+                           \
+#Add pZ term into raw data per-guide values\
+rep2A_comboMYH9$pZ <- (rep2A_comboMYH9$log2FClowHIGH - rep2A_median_negCTL_log2fc) / rep2A_stdev_negCTL\
+comboMYH9$pZ <- (comboMYH9$lowHIGH_log2fc - median_negCTL_log2fc) / stdev_negCTL\
+\
+rep2A_MYH9targeting$pZ <- (rep2A_MYH9targeting$log2FClowHIGH - rep2A_median_negCTL_log2fc) / rep2A_stdev_negCTL\
+plot(rep2A_MYH9targeting$`target site start coordinate`,rep2A_MYH9targeting$pZ)\
+rep2A_neg_stranded$pZ <- (rep2A_neg_stranded$log2FClowHIGH - rep2A_median_negCTL_log2fc) / rep2A_stdev_negCTL\
+\
+#REP2-only: Calculate median-pZ values for DHSs\
+rep2A_DHSmed_negStrand <- group_by(rep2A_neg_stranded, DHS) %>% \
+  summarize(medianFC = median(lowHIGH))  \
+rep2A_DHSmed_negStrand$medianFC_norm <- rep2A_DHSmed_negStrand$medianFC - rep2A_median_negCTL\
+rep2A_DHSmed_negStrand$medianlog2FC <- log2(rep2A_DHSmed_negStrand$medianFC)\
+rep2A_DHSmed_negStrand$pZ <- (rep2A_DHSmed_negStrand$medianlog2FC - rep2A_median_negCTL_log2fc)/rep2A_stdev_negCTL       \
+\
+#REP2-only: Color-code plots by which type of DHS they're in\
+rep2A_DHSmed_negStrand$group <- ifelse(rep2A_DHSmed_negStrand$DHS %in% forceDHS, "#00B2FF", "black")\
+rep2A_DHSmed_negStrand <-mutate(rep2A_DHSmed_negStrand, group = ifelse(rep2A_DHSmed_negStrand$DHS %in% tssDHS, "#BC544B", group))\
+\
+ggplot(rep2A_DHSmed_negStrand, aes(x=as.numeric(DHS),y=pZ)) + geom_point(colour=rep2A_DHSmed_negStrand$group,size = 3,alpha = 1) + theme_minimal() + xlab("DHS") + ylab("Effect size (pZ) per DHS") + theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black'))\
+\
+ggplot(rep2A_neg_stranded, aes(x=as.numeric(`target site start coordinate`),y=pZ)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Effect Size (pZ)") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())\
+\
+```\
+\
+#Mirror Graphs for strand-bias\
+```\{r mirrorGraph, echo=FALSE\}\
+rep2A_mirror <- rep2A_combo_neg_stranded\
+\
+rep2A_mirror$lowHIGH <- -rep2A_mirror$lowHIGH\
+rep2A_mirror <- bind_rows(rep2A_mirror, rep2A_pos_stranded)\
+\
+rep1A_mirror <- neg_stranded\
+rep1A_mirror$lowHIGHfc <- -rep1A_mirror$lowHIGHfc\
+rep1A_mirror <- bind_rows(rep1A_mirror, pos_stranded)\
+\
+\
+#REP2A Mirror Plot with Chr Axes (Regular FC)\
+ggplot(rep2A_mirror, aes(x=as.numeric(`target site start coordinate`),y=lowHIGH)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Strand-adjusted Low/High FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Mirror Plot (Pos Strand / Negative Strand)")+ylim(-20,20)+geom_hline(yintercept = mean(rep2A_non_targeting$lowHIGH), color = "red", size=0.5, alpha=0.4)+geom_hline(yintercept = -mean(rep2A_non_targeting$lowHIGH), color = "red", size=0.5, alpha=0.4)\
+\
+#REP1 MIRROR PLOT\
+ggplot(rep1A_mirror, aes(x=as.numeric(`target site start coordinate`),y=lowHIGHfc)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Strand-adjusted Low/High FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Mirror Plot (Pos Strand / Negative Strand)")+ylim(-20,20)+geom_hline(yintercept = mean(non_targeting$lowHIGHfc), color = "red", size=0.5, alpha=0.4)+geom_hline(yintercept = -mean(non_targeting$lowHIGHfc), color = "red", size=0.5, alpha=0.4)\
+\
+#Combo Mirror Plot with Chr Axes (Regular FC)\
+ggplot(rep2A_mirror, aes(x=as.numeric(`target site start coordinate`),y=lowHIGH)) + geom_point(size = 1,alpha = 0.35, color='black') + theme_bw() + xlab("chr22 Location") + ylab("Strand-adjusted Low/High FC") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Mirror Plot (Pos Strand / Negative Strand)")+ylim(-20,20) +geom_point(data=rep1A_mirror, aes(x=as.numeric(`target site start coordinate`),y=lowHIGHfc), color ='orange', size=1,alpha=0.2)\
+```\
+\
+\
+---\
+title: "MYH9screen_comboAnalysis"\
+output: html_document\
+---\
+\
+\
+```\{r setup, include=FALSE\}\
+library(ggplot2)\
+library(tidyr)\
+library(stringr)\
+library(dplyr)\
+library(ggrepel)\
+```\
+\
+```\{r compare_reps\}\
+#Comapring Rep1 to Rep2\
+comp <- full_join(rep2A_matrix,mergeMYH9,by="gRNA label")\
+compLabel <- subset(comp,lowHIGH > 10.5)\
+\
+#withoutLabels\
+ggplot(comp, aes(x=lowHIGH,y=lowHIGHfc))+geom_point(size = 1,alpha = 0.25)+ theme_bw() + xlab("Rep#2 Fold-Change") + ylab("Rep#1 Fold-Change ") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Comparison of Reps by gRNA Fold-Change")\
+\
+#with Labels\
+ggplot(comp, aes(x=lowHIGH,y=lowHIGHfc))+geom_point(size = 1,alpha = 0.25)+ theme_bw() + xlab("Rep#2 Fold-Change") + ylab("Rep#1 Fold-Change ") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())+ggtitle("Comparison of Reps by gRNA Fold-Change")+geom_text_repel(data=compLabel,aes(lowHIGH,lowHIGHfc,label=`gRNA label`), size=2)\
+\
+cor(comp$lowHIGH,comp$lowHIGHfc)\
+```\
+\
+``` \{r pZ-Calcs\}\
+#BOTHREPS: Calculate median-pZ values for DHSs\
+bothRep_comboMYH9_output <- bothRep_comboMYH9 %>% select(1,11,13,14,8,9,10,2,3,4,5,6,7,22,23,21)\
+bothRep_comboMYH9_output <- bind_cols(comboMYH9,rep2A_comboMYH9) %>% select(1,11,13,14,19,8,9,10,2,3,4,5,6,7,21,23,24,26,27,29,30,44)\
+  \
+bothRep_comboMYH9 <- bind_rows(comboMYH9,rep2A_comboMYH9)\
+bothRep_comboMYH9$lowHIGH <- coalesce(bothRep_comboMYH9$lowHIGHfc,bothRep_comboMYH9$lowHIGH)\
+bothRep_comboMYH9$lowHIGH_log2fc <- coalesce(bothRep_comboMYH9$lowHIGH_log2fc,bothRep_comboMYH9$log2FClowHIGH)\
+\
+bothRep_negStrand_nonTarget <- bind_rows(neg_stranded,rep2A_neg_stranded,non_targeting,rep2A_non_targeting)\
+\
+bothRep_DHS_negStrand_nonTarget <- group_by(bothRep_negStrand_nonTarget, DHS) %>% \
+  summarize(pZ = median(pZ))  \
+\
+bothRep_gRNA_negStrand_nonTarget <- group_by(bothRep_negStrand_nonTarget, `gRNA label`) %>% \
+  summarize(mean_pZ = mean(pZ))\
+\
+bothRep_non_targeting <- bothRep_comboMYH9 %>% subset(DHS == 'non-targeting')\
+\
+#pZ calcs\
+bothRep_median_negCTL <- as.numeric(bothRep_non_targeting %>% summarize(median = median(lowHIGH)))\
+bothRep_mean_negCTL <- as.numeric(bothRep_non_targeting %>% summarize(mean = mean(lowHIGH)))\
+bothRep_mean_negCTL_log2fc <- log2(bothRep_mean_negCTL)\
+bothRep_median_negCTL_log2fc <-  log2(bothRep_median_negCTL)\
+bothRep_stdev_negCTL <- as.numeric(bothRep_non_targeting %>% summarize(bothRep_stdev_log2FC = sd(lowHIGH_log2fc)))\
+bothRep_num_CTL <- as.numeric(bothRep_non_targeting %>% tally())\
+bothRep_varCTL <- as.numeric(bothRep_non_targeting %>% summarize(var = var(log2FClowHIGH)))\
+\
+#Add pZ term into raw data per-guide values\
+bothRep_comboMYH9$pZ <- (bothRep_comboMYH9$lowHIGH - bothRep_median_negCTL_log2fc) / bothRep_stdev_negCTL\
+\
+bothRep_$pZ <- (bothRep_MYH9targeting$log2FClowHIGH - bothRep_median_negCTL_log2fc) / bothRep_stdev_negCTL\
+\
+plot(rep2A_MYH9targeting$`target site start coordinate`,rep2A_MYH9targeting$pZ)\
+rep2A_neg_stranded$pZ <- (rep2A_neg_stranded$log2FClowHIGH - rep2A_median_negCTL_log2fc) / rep2A_stdev_negCTL\
+\
+#Strong DHS analysis\
+bothRep_DHSstrong <- bothRep_negStrand %>% subset(lowHIGH>0.8 | lowHIGH < 0.6) %>% group_by(DHS) %>% summarize(log2fc=median(lowHIGH_log2fc), pZ_avg = mean(pZ),norm_sum_pZ = sum(pZ), count=n()) %>% subset(count > 1) %>% subset(abs(pZ_avg)>2)\
+\
+#Color-code plots by which type of DHS they're in, plots\
+bothRep_DHS_negStrand_nonTarget$group <- ifelse(bothRep_DHS_negStrand_nonTarget$DHS %in% forceDHS, "#00B2FF", "black")\
+bothRep_DHS_negStrand_nonTarget <-mutate(bothRep_DHS_negStrand_nonTarget, group = ifelse(bothRep_DHS_negStrand_nonTarget$DHS %in% tssDHS, "black", group))\
+\
+ggplot(bothRep_DHS_negStrand_nonTarget, aes(x=as.numeric(DHS),y=pZ)) + geom_point(colour=bothRep_DHS_negStrand_nonTarget$group,size = 3,alpha = 1) + theme_minimal() + xlab("DHS") + ylab("Effect size (pZ) per DHS") + theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black'))\
+\
+ggplot(rep2A_neg_stranded, aes(x=as.numeric(`target site start coordinate`),y=pZ)) + geom_point(size = 1,alpha = 0.25) + theme_bw() + xlab("chr22 Location") + ylab("Effect Size (pZ)") + theme(text = element_text(size=20), panel.grid.major.x  = element_blank())\
+\
+#t-score_calcs\
+#Get variance for each guide \
+guides_per_DHS <- neg_stranded %>% group_by(DHS) %>% tally()\
+bothRep_varLookup <- group_by(bothRep_negStrand_nonTarget,DHS)  %>% summarize(v= var(lowHIGH_log2fc))\
+\
+#Get t-score for DHS median data\
+bothRep_DHSmed_negStrand<- full_join(bothRep_negStrand_nonTarget,guides_per_DHS,by="DHS")\
+bothRep_DHSmed_negStrand <- full_join(bothRep_DHSmed_negStrand,bothRep_varLookup,by="DHS")\
+bothRep_DHSmed_negStrand$svar <- ((bothRep_DHSmed_negStrand$var*(bothRep_DHSmed_negStrand$n - 1)) +(bothRep_varCTL*(bothRep_num_CTL - 1)))\
+DHSmed_negStrand$tscore <- (DHSmed_negStrand$medianlog2FC - median_negCTL_log2fc) / sqrt(DHSmed_negStrand$svar/DHSmed_negStrand$n + DHSmed_negStrand$svar/num_CTL)\
+\
+\
+\
+ggplot(DHSmed_negStrand, aes(x=as.numeric(DHS),y=tscore)) + geom_point(colour=DHSmed_negStrand$group,size = 3,alpha = 1) + theme_minimal() + xlab("DHS") + ylab("Phenotype score per DHS (t-score)") + theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black'))\
+\
+ggplot(DHSmed_negStrand, aes(x=pZ,y=abs(tscore))) + geom_point(colour=DHSmed_negStrand$group,size = 3,alpha = 0.7) + theme_minimal() + xlab("Effect size (pZ)") + ylab("Absolute Phenotype score per DHS (t-score)") + theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black'))\
+```}
