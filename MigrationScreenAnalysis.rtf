@@ -1,0 +1,272 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2580
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 \
+```\{r setup, include=FALSE\}\
+library(ggplot2)\
+library(tidyr)\
+library(stringr)\
+library(dplyr)\
+library(ggrepel)\
+```\
+\
+\
+\
+```\{r import\}\
+\
+D2_matrix <- counts_nonmigrated\
+D2_matrix <- full_join(D2_matrix,counts_migrated,by='V1')\
+D2_matrix <- full_join(D2_matrix,counts_CTL,by='V1')\
+\
+\
+colnames(D2_matrix)[1] <- "gRNA label"\
+colnames(D2_matrix)[2] <- "non-migrated"\
+colnames(D2_matrix)[3] <- "migrated"\
+colnames(D2_matrix)[4] <- "CTL"\
+\
+\
+D2_matrix <- subset(D2_matrix,D2_matrix$`gRNA label` != "*")\
+D2_matrix <- subset(D2_matrix,D2_matrix$`gRNA label` != "non-targeting_01000")\
+D2_matrix$`non-migrated` <- D2_matrix$`non-migrated` +1\
+D2_matrix$migrated <- D2_matrix$migrated +1\
+D2_matrix$CTL <- D2_matrix$CTL +1\
+\
+nonReads_D2 <- as.numeric(sum(D2_matrix$`non-migrated`))\
+migReads_D2 <- as.numeric(sum(D2_matrix$`migrated`))\
+CTLreads_D2 <- as.numeric(sum(D2_matrix$CTL))\
+\
+\
+\
+D2_matrix$nonCPM <- D2_matrix$`non-migrated`/nonReads_D2*1e6\
+D2_matrix$migCPM <- D2_matrix$migrated/migReads_D2*1e6\
+D2_matrix$ctlCPM <- D2_matrix$CTL/CTLreads_D2*1e6\
+\
+D2_matrix$ratio <- D2_matrix$migCPM/D2_matrix$nonCPM\
+D2_matrix$log2ratio <- log2(D2_matrix$ratio)\
+D2_matrix$ctlMIG <- D2_matrix$migCPM/D2_matrix$ctlCPM\
+D2_matrix$log2CTLmig <- log2(D2_matrix$ctlMIG)\
+D2_matrix$ctlNON <- D2_matrix$nonCPM/D2_matrix$ctlCPM\
+D2_matrix$log2CTLnon <- log2(D2_matrix$ctlNON)\
+\
+D2_matrix_detail <- full_join(D2_matrix,finalLibrary, by="gRNA label")\
+D2_matrix_detail$DHS <- D2_matrix_detail$`gRNA label`\
+D2_non_targeting <- D2_matrix_detail %>% filter(str_detect(ID,"negative_control"))\
+D2_non_targeting <- D2_non_targeting %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+D2_non_targeting$guideNum <- as.numeric(D2_non_targeting$guideNum)\
+D2_non_targeting$group <- "negative_control"\
+D2_posCTL <- D2_matrix_detail %>% filter(str_detect(V1,"NM_"))\
+D2_posCTL <- D2_posCTL %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+D2_posCTL$guideNum <- as.numeric(D2_posCTL$guideNum)\
+D2_posCTL$group <- "positive_control"\
+D2_targeting <- dplyr::filter(D2_matrix_detail, !grepl("non", D2_matrix_detail$`gRNA label`))\
+D2_targeting <- dplyr::filter(D2_targeting, !grepl("NM_", D2_targeting$V1))\
+D2_targeting <- separate(data=D2_targeting, col = DHS, into=c('DHS','guideNum'), sep="__")\
+D2_targeting$DHS <- str_remove_all(D2_targeting$DHS,"gRNA_" )\
+D2_targeting$guideNum <- as.numeric(D2_targeting$guideNum)\
+D2_targeting$group <- "putative_reg_element"\
+\
+\
+D2_combo <- bind_rows(D2_targeting,D2_non_targeting,D2_posCTL)\
+D2_combo$displayColor <- 'black'\
+D2_combo <- D2_combo %>% mutate(displayColor = if_else(group=='positive_control','red',displayColor))\
+D2_combo <- D2_combo %>% mutate(displayColor = if_else(group=='negative_control','blue',displayColor))\
+\
+#Add pZ term into raw data per-guide values\
+D2_combo$pZ <- (D2_combo$log2ratio - D2_median_negCTL_log2fc) / D2_stdev_negCTL\
+D2_combo$pZ_ctlNON <- (D2_combo$log2CTLnon - D2_median_negCTL_log2fc) / D2_stdev_negCTL\
+D2_combo$pZ_ctlMIG <- (D2_combo$log2CTLmig - D2_median_negCTL_log2fc) / D2_stdev_negCTL\
+```\
+\
+```\{r DHSanalysis, echo=FALSE\}\
+\
+# Calculting control population statistics (median, variance, # of guides)\
+D2_median_negCTL <- as.numeric(D2_non_targeting %>% summarize(median = median(ratio)))\
+D2_median_negCTL_log2fc <- log2(D2_median_negCTL)\
+D2_mean_negCTL <- as.numeric(D2_non_targeting %>% summarize(mean = mean(ratio)))\
+D2_mean_negCTL_log2fc <- log2(D2_mean_negCTL)\
+D2_stdev_negCTL <- as.numeric(D2_non_targeting %>% summarize(D2_stdev_log2FC = sd(log2ratio)))\
+D2_num_CTL <- as.numeric(D2_non_targeting %>% tally())\
+D2_varCTL <- as.numeric(D2_non_targeting %>% summarize(var = var(log2ratio)))\
+\
+\
+#REP2-only: Calculate median-pZ values for DHSs\
+D2_DHSmed <- group_by(D2_combo, DHS) %>% \
+  summarize(log2fc=median(log2ratio),pZ = median(pZ),group=first(group),displayColor = first(displayColor)) \
+\
+D2_DHSstrong <- D2_combo %>% subset(abs(log2ratio)>1) %>% group_by(DHS) %>% summarize(log2fc=median(log2ratio),coord=str_c(first(chromosome),":",min(target.site.start.coordinate),"-",max(target.site.end.coordinate)), pZ_avg = mean(pZ),norm_sum_pZ = sum(pZ), count=n(),group=first(group),displayColor = first(displayColor)) %>% subset(count > 1) %>% subset(abs(pZ_avg)>1)\
+\
+D2_DHSmed <- D2_DHSmed %>% arrange(pZ)\
+D2_DHStally <- group_by(D2_combo, DHS) %>% \
+  summarize(count = n()) \
+D2_DHSmed <- full_join(D2_DHSmed,D2_DHStally,by="DHS")\
+\
+D2_DHSmed <- D2_DHSmed %>% mutate(case_when(pZ > 0.8 | pZ < -0.8 ~ DHS, TRUE ~""))\
+colnames(D2_DHSmed)[7] <- "plot_label"\
+\
+\
+\
+#Get t-score for DHS median data\
+varLookup <- D2_combo %>% group_by(DHS) %>% summarize(var = var(log2ratio))\
+\
+D2_DHSmed<- full_join(D2_DHSmed,varLookup,by="DHS")\
+D2_DHSmed <- D2_DHSmed %>% subset(count>1)\
+D2_DHSmed$svar <- ((D2_DHSmed$var*(D2_DHSmed$count - 1))+(D2_varCTL*(D2_num_CTL - 1))/(D2_num_CTL+D2_DHSmed$count-2))\
+D2_DHSmed$tscore <- (D2_DHSmed$log2fc - D2_median_negCTL_log2fc) / sqrt((D2_DHSmed$svar/D2_DHSmed$count) + (D2_DHSmed$svar/D2_num_CTL))\
+D2_DHSmed <- D2_DHSmed %>% mutate(case_when(tscore > 0.8 | tscore < -0.8 ~ DHS, TRUE ~""))\
+colnames(D2_DHSmed)[11] <- "tscore_label"\
+\
+\
+ggplot(D2_DHSmed, aes(x=pZ,y=abs(tscore)))+geom_point(colour=D2_DHSmed$displayColor,size = 2,alpha = 0.5)+ theme_bw() + xlab("pZ") + ylab("Absolute Phenotype Score") +theme(aspect.ratio =1) +geom_text_repel(aes(label=D2_DHSmed$tscore_label),color="grey", size=3)\
+\
+ggplot(D2_DHSmed, aes(x=as.numeric(row.names(D2_DHSmed)),y=pZ)) + geom_point(colour=D2_DHSmed$displayColor,size = 2,alpha = 0.3) + theme_bw() + xlab("Chromatin Region") + ylab("Median Effect size (pZ) per Region") + theme(aspect.ratio = 1,axis.text.x=element_blank(),axis.ticks.x=element_blank(),panel.grid.major.x  = element_blank(),panel.grid.minor.x = element_blank())+geom_hline(yintercept=0)+geom_text_repel(aes(label = D2_DHSmed$plot_label))\
+\
+Median_posCTL<- D2_DHSmed %>% subset(group=='positive_control') %>% subset(abs(pZ)>0.5) %>% arrange(pZ)\
+ALL_HIT<- D2_DHSmed %>% subset(abs(pZ)>0.5) %>% arrange(pZ)\
+RE_HIT<- D2_DHSmed %>% subset(group=='putative_reg_element') %>% subset(abs(pZ)>0.5) %>% arrange(pZ)\
+\
+  \
+  a <- ggplot(RE_HIT, aes(x=reorder(DHS,-pZ),y=pZ,label=pZ)) + \
+  geom_point(fill="black", size=6)  +\
+  geom_segment(aes(y = 0, \
+                   x = DHS, \
+                   yend = pZ, \
+                   xend = DHS), \
+               color = "black") +\
+  geom_text(aes(label=round(pZ,digits=2)),color="white", size=2) +\
+  coord_flip() + \
+  theme_bw() +\
+  theme(aspect.ratio = 2,\
+        axis.text.y = element_text(size=6)) +\
+  geom_vline(xintercept=0)\
+\
+\
+\
+\
+ctlMig_DHSmed <- group_by(D2_combo, DHS) %>% \
+  summarize(pZ = median(pZ_ctlMIG), displayColor = first(displayColor))  \
+ctlNON_DHSmed <- group_by(D2_combo, DHS) %>% \
+  summarize(pZ = median(pZ_ctlNON))  \
+\
+\
+\
+D2_DHSmed <- full_join(D2_DHSmed,ctlNON_DHSmed,by='DHS')\
+colnames(D2_DHSmed)[4] <- "pZ_ctlNON"\
+colnames(D2_DHSmed)[2] <- "pZ"\
+D2_DHSmed$delta <- abs(D2_DHSmed$pZ-D2_DHSmed$pZ_ctlNON)\
+D2_DHSmed <- full_join(D2_DHSmed,ctlMig_DHSmed,by='DHS')\
+colnames(D2_DHSmed)[2] <- "pZ"\
+colnames(D2_DHSmed)[4] <- "pZ_ctlNON"\
+colnames(D2_DHSmed)[6] <- "pZ_ctlMIG"\
+D2_DHSmed$delta_ctlMIG <- abs(D2_DHSmed$pZ-D2_DHSmed$pZ_ctlMIG)\
+\
+\
+D2_DHSavg <- group_by(D2_combo, DHS) %>% \
+  summarize(pZ = mean(pZ))  \
+\
+compare <- full_join(ctlMig_DHSmed,D2_DHSmed,by='DHS')\
+colnames(compare)[3] <- "migCTL"\
+colnames(compare)[2] <- "migNON"\
+compare$delta <- compare$migNON / compare$migCTL * 100\
+\
+D2_DHSmed_negStrand$medianFC_norm <- D2_DHSmed_negStrand$medianFC - D2_median_negCTL\
+D2_DHSmed_negStrand$medianlog2FC <- log2(D2_DHSmed_negStrand$medianFC)\
+D2_DHSmed_negStrand$pZ <- (D2_DHSmed_negStrand$medianlog2FC - D2_median_negCTL_log2fc)/D2_stdev_negCTL  \
+\
+```\
+\
+\
+```\{r setup, include=FALSE\}\
+library(ggplot2)\
+library(tidyr)\
+library(stringr)\
+library(dplyr)\
+library(ggrepel)\
+```\
+\
+\
+\
+```\{r import\}\
+\
+D2_rep2_matrix <- counts_rep2_nonmigrated\
+D2_rep2_matrix <- full_join(D2_rep2_matrix,counts_rep2_migrated,by='V1')\
+D2_rep2_matrix <- full_join(D2_rep2_matrix,counts_rep2_CTL,by='V1')\
+\
+\
+colnames(D2_rep2_matrix)[1] <- "gRNA label"\
+colnames(D2_rep2_matrix)[2] <- "non-migrated"\
+colnames(D2_rep2_matrix)[3] <- "migrated"\
+colnames(D2_rep2_matrix)[4] <- "CTL"\
+\
+\
+D2_rep2_matrix <- subset(D2_rep2_matrix,D2_rep2_matrix$`gRNA label` != "*")\
+D2_rep2_matrix <- subset(D2_rep2_matrix,D2_rep2_matrix$`gRNA label` != "non-targeting_01000")\
+D2_rep2_matrix$`non-migrated` <- D2_rep2_matrix$`non-migrated` +1\
+D2_rep2_matrix$migrated <- D2_rep2_matrix$migrated +1\
+D2_rep2_matrix$CTL <- D2_rep2_matrix$CTL +1\
+\
+nonReads_D2_rep2 <- as.numeric(sum(D2_rep2_matrix$`non-migrated`))\
+migReads_D2_rep2 <- as.numeric(sum(D2_rep2_matrix$`migrated`))\
+CTLreads_D2_rep2 <- as.numeric(sum(D2_rep2_matrix$CTL))\
+\
+\
+\
+D2_rep2_matrix$nonCPM <- D2_rep2_matrix$`non-migrated`/nonReads_D2_rep2*1e6\
+D2_rep2_matrix$migCPM <- D2_rep2_matrix$migrated/migReads_D2_rep2*1e6\
+D2_rep2_matrix$ctlCPM <- D2_rep2_matrix$CTL/CTLreads_D2_rep2*1e6\
+\
+D2_rep2_matrix$ratio <- D2_rep2_matrix$migCPM/D2_rep2_matrix$nonCPM\
+D2_rep2_matrix$log2ratio <- log2(D2_rep2_matrix$ratio)\
+D2_rep2_matrix$ctlMIG <- D2_rep2_matrix$migCPM/D2_rep2_matrix$ctlCPM\
+D2_rep2_matrix$log2CTLmig <- log2(D2_rep2_matrix$ctlMIG)\
+D2_rep2_matrix$ctlNON <- D2_rep2_matrix$nonCPM/D2_rep2_matrix$ctlCPM\
+D2_rep2_matrix$log2CTLnon <- log2(D2_rep2_matrix$ctlNON)\
+\
+D2_rep2_matrix_detail <- full_join(D2_rep2_matrix,finalLibrary, by="gRNA label")\
+D2_rep2_matrix_detail$DHS <- D2_rep2_matrix_detail$`gRNA label`\
+D2_rep2_non_targeting <- D2_rep2_matrix_detail %>% filter(str_detect(ID,"negative_control"))\
+D2_rep2_non_targeting <- D2_rep2_non_targeting %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+D2_rep2_non_targeting$guideNum <- as.numeric(D2_rep2_non_targeting$guideNum)\
+D2_rep2_non_targeting$group <- "negative_control"\
+D2_rep2_posCTL <- D2_rep2_matrix_detail %>% filter(str_detect(V1,"NM_"))\
+D2_rep2_posCTL <- D2_rep2_posCTL %>% separate(DHS, into=c('DHS','guideNum'), sep="_")\
+D2_rep2_posCTL$guideNum <- as.numeric(D2_rep2_posCTL$guideNum)\
+D2_rep2_posCTL$group <- "positive_control"\
+D2_rep2_targeting <- dplyr::filter(D2_rep2_matrix_detail, !grepl("non", D2_rep2_matrix_detail$`gRNA label`))\
+D2_rep2_targeting <- dplyr::filter(D2_rep2_targeting, !grepl("NM_", D2_rep2_targeting$V1))\
+D2_rep2_targeting <- separate(data=D2_rep2_targeting, col = DHS, into=c('DHS','guideNum'), sep="__")\
+D2_rep2_targeting$DHS <- str_remove_all(D2_rep2_targeting$DHS,"gRNA_" )\
+D2_rep2_targeting$guideNum <- as.numeric(D2_rep2_targeting$guideNum)\
+D2_rep2_targeting$group <- "putative_reg_element"\
+\
+\
+D2_rep2_combo <- bind_rows(D2_rep2_targeting,D2_rep2_non_targeting,D2_rep2_posCTL)\
+D2_rep2_combo$displayColor <- 'black'\
+D2_rep2_combo <- D2_rep2_combo %>% mutate(displayColor = if_else(group=='positive_control','red',displayColor))\
+D2_rep2_combo <- D2_rep2_combo %>% mutate(displayColor = if_else(group=='negative_control','blue',displayColor))\
+\
+# Calculting control population statistics (median, variance, # of guides)\
+D2_rep2_median_negCTL <- as.numeric(D2_rep2_non_targeting %>% summarize(median = median(ratio)))\
+D2_rep2_median_negCTL_log2fc <- log2(D2_rep2_median_negCTL)\
+D2_rep2_mean_negCTL <- as.numeric(D2_rep2_non_targeting %>% summarize(mean = mean(ratio)))\
+D2_rep2_mean_negCTL_log2fc <- log2(D2_rep2_mean_negCTL)\
+D2_rep2_stdev_negCTL <- as.numeric(D2_rep2_non_targeting %>% summarize(D2_rep2_stdev_log2FC = sd(log2ratio)))\
+D2_rep2_num_CTL <- as.numeric(D2_rep2_non_targeting %>% tally())\
+D2_rep2_varCTL <- as.numeric(D2_rep2_non_targeting %>% summarize(var = var(log2ratio)))\
+\
+#Add pZ term into raw data per-guide values\
+D2_rep2_combo$pZ <- (D2_rep2_combo$log2ratio - D2_rep2_median_negCTL_log2fc) / (D2_rep2_stdev_negCTL )\
+D2_rep2_combo$pZ_ctlNON <- (D2_rep2_combo$log2CTLnon - D2_rep2_median_negCTL_log2fc) / D2_rep2_stdev_negCTL\
+D2_rep2_combo$pZ_ctlMIG <- (D2_rep2_combo$log2CTLmig - D2_rep2_median_negCTL_log2fc) / D2_rep2_stdev_negCTL\
+\
+#Combined reps, by gRNA for analysis\
+combo_gRNA <- bind_rows(D2_combo,D2_rep2_combo)\
+\
+\
+#Combined reps, by DHS for analysis\
+combo_nonfilt <- inner_join(D2_combo %>% group_by(DHS) %>% summarise(pZ=mean(pZ),count=n(),log2ratio=mean(log2ratio),coord=str_c(first(chromosome),":",min(target.site.start.coordinate),"-",max(target.site.end.coordinate))),D2_rep2_combo %>% group_by(DHS) %>% summarise(pZ=mean(pZ),log2ratio=mean(log2ratio),count=n(),coord=str_c(first(chromosome),":",min(target.site.start.coordinate),"-",max(target.site.end.coordinate))),by="DHS") #%>% select(1:5)\
+combo_nonfilt$avg_pZ <- (combo_nonfilt$pZ.x+combo_nonfilt$pZ.y)/2\
+combo_nonfilt$log2ratio <- (combo_nonfilt$log2ratio.x+combo_nonfilt$log2ratio.y)/2}
